@@ -4,6 +4,8 @@
 #include <cstring>
 #include <grpc.h>
 
+constexpr char helloworld_end[] = "/helloworld.Greeter/SayHello";
+
 grpc_byte_buffer *string_to_byte_buffer(const char *string, size_t length) {
     grpc_slice slice = grpc_slice_from_copied_buffer(string, length);
     grpc_byte_buffer *buffer = grpc_raw_byte_buffer_create(&slice, 1);
@@ -60,6 +62,8 @@ int main(int argc, char const *argv[]) {
     grpc_server_request_call(server, &call, &details, &request_metadata, cq, cq, (void *)1);
     gpr_timespec ts = {.tv_sec = 1, .tv_nsec = 0, .clock_type = GPR_TIMESPAN};
     bool is_loop = true;
+
+    // TODO: can process only one request..
     while (is_loop) {
         grpc_event e = grpc_completion_queue_pluck(cq, (void *)1, ts, nullptr);
         switch (e.type) {
@@ -71,45 +75,46 @@ int main(int argc, char const *argv[]) {
             fprintf(stderr, "received call\n");
             fprintf(stderr, "method:%s, host:%s\n", grpc_slice_to_c_string(details.method), grpc_slice_to_c_string(details.host));
 
-            // send response
-            grpc_op ops[6];
-            memset(ops, 0, sizeof(ops));
-            grpc_op *op = ops;
-            op->op = GRPC_OP_SEND_INITIAL_METADATA;
-            op->data.send_initial_metadata.count = 0;
-            op->flags = 0;
-            op->reserved = nullptr;
+            if (strcmp(helloworld_end, grpc_slice_to_c_string(details.method)) == 0) {
+                // send response
+                grpc_op ops[6];
+                memset(ops, 0, sizeof(ops));
+                grpc_op *op = ops;
+                op->op = GRPC_OP_SEND_INITIAL_METADATA;
+                op->data.send_initial_metadata.count = 0;
+                op->flags = 0;
+                op->reserved = nullptr;
 
-            // send message
-            op++;
-            helloworld::HelloReply reply;
-            char res_msg[] = "response hello";
-            reply.set_message(res_msg);
-            std::string body = reply.SerializeAsString();
-            grpc_slice slice = grpc_slice_from_copied_buffer(body.c_str(), body.length());
-            grpc_byte_buffer *buf = grpc_raw_byte_buffer_create(&slice, 1);
+                // send message
+                op++;
+                helloworld::HelloReply reply;
+                char res_msg[] = "response hello";
+                reply.set_message(res_msg);
+                std::string body = reply.SerializeAsString();
+                grpc_slice slice = grpc_slice_from_copied_buffer(body.c_str(), body.length());
+                grpc_byte_buffer *buf = grpc_raw_byte_buffer_create(&slice, 1);
 
-            op->op = GRPC_OP_SEND_MESSAGE;
-            op->data.send_message.send_message = buf;
+                op->op = GRPC_OP_SEND_MESSAGE;
+                op->data.send_message.send_message = buf;
 
-            // send status
-            op++;
-            op->op = GRPC_OP_SEND_STATUS_FROM_SERVER;
-            op->data.send_status_from_server.trailing_metadata_count = 0;
-            op->data.send_status_from_server.status = GRPC_STATUS_OK;
-            grpc_slice status_details = grpc_slice_from_static_string("xyz");
-            op->data.send_status_from_server.status_details = &status_details;
-            op->flags = 0;
-            op->reserved = nullptr;
-            op++;
-            op->op = GRPC_OP_RECV_CLOSE_ON_SERVER;
-            op->flags = 0;
-            op->reserved = nullptr;
+                // send status
+                op++;
+                op->op = GRPC_OP_SEND_STATUS_FROM_SERVER;
+                op->data.send_status_from_server.trailing_metadata_count = 0;
+                op->data.send_status_from_server.status = GRPC_STATUS_OK;
+                grpc_slice status_details = grpc_slice_from_static_string("xyz");
+                op->data.send_status_from_server.status_details = &status_details;
+                op->flags = 0;
+                op->reserved = nullptr;
+                op++;
+                op->op = GRPC_OP_RECV_CLOSE_ON_SERVER;
+                op->flags = 0;
+                op->reserved = nullptr;
 
-            grpc_call_start_batch(call, ops, static_cast<size_t>(op - ops), (void *)100, nullptr);
-
-            is_loop = false;
-            break;
+                grpc_call_start_batch(call, ops, static_cast<size_t>(op - ops), (void *)100, nullptr);
+            } else {
+                fprintf(stderr, "rpc called but unknown rpc method\n");
+            }
         }
     }
 
