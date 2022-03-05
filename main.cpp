@@ -46,8 +46,13 @@ int main(int argc, char const *argv[]) {
     grpc_server_start(server);
 
     grpc_call *call;
+
     grpc_call_details *details;
+    details->host = grpc_empty_slice();
+    details->method = grpc_empty_slice();
     grpc_metadata_array *request_metadata;
+    memset(request_metadata, 0, sizeof(*request_metadata));
+
     grpc_server_request_call(server, &call, details, request_metadata, cq, cq, (void *)1);
     gpr_timespec ts = {.tv_sec = 1, .tv_nsec = 0, .clock_type = GPR_TIMESPAN};
     bool is_loop = true;
