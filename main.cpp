@@ -1,16 +1,20 @@
+#include "helloworld.pb.h"
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <grpc.h>
 
-grpc_byte_buffer *string_to_byte_buffer(char *string, size_t length) {
+grpc_byte_buffer *string_to_byte_buffer(const char *string, size_t length) {
     grpc_slice slice = grpc_slice_from_copied_buffer(string, length);
     grpc_byte_buffer *buffer = grpc_raw_byte_buffer_create(&slice, 1);
     grpc_slice_unref(slice);
     return buffer;
 }
 
+void grpc_metadata_array_init(grpc_metadata_array *array) { memset(array, 0, sizeof(grpc_metadata_array)); }
+
 int main(int argc, char const *argv[]) {
+    GOOGLE_PROTOBUF_VERIFY_VERSION;
     /* code */
     grpc_init();
     const char *version = grpc_version_string();
@@ -47,13 +51,13 @@ int main(int argc, char const *argv[]) {
 
     grpc_call *call;
 
-    grpc_call_details *details;
-    details->host = grpc_empty_slice();
-    details->method = grpc_empty_slice();
-    grpc_metadata_array *request_metadata;
-    memset(request_metadata, 0, sizeof(*request_metadata));
+    grpc_call_details details;
+    details.host = grpc_empty_slice();
+    details.method = grpc_empty_slice();
+    grpc_metadata_array request_metadata;
+    grpc_metadata_array_init(&request_metadata);
 
-    grpc_server_request_call(server, &call, details, request_metadata, cq, cq, (void *)1);
+    grpc_server_request_call(server, &call, &details, &request_metadata, cq, cq, (void *)1);
     gpr_timespec ts = {.tv_sec = 1, .tv_nsec = 0, .clock_type = GPR_TIMESPAN};
     bool is_loop = true;
     while (is_loop) {
@@ -65,7 +69,7 @@ int main(int argc, char const *argv[]) {
 
         default:
             fprintf(stderr, "received call\n");
-            fprintf(stderr, "method:%s, host:%s\n", grpc_slice_to_c_string(details->method), grpc_slice_to_c_string(details->host));
+            fprintf(stderr, "method:%s, host:%s\n", grpc_slice_to_c_string(details.method), grpc_slice_to_c_string(details.host));
 
             // send response
             grpc_op ops[6];
@@ -78,8 +82,12 @@ int main(int argc, char const *argv[]) {
 
             // send message
             op++;
-            char res[] = "hello";
-            grpc_byte_buffer *buf = string_to_byte_buffer(res, strlen(res));
+            helloworld::HelloReply reply;
+            char res_msg[] = "response hello";
+            reply.set_message(res_msg);
+            std::string body = reply.SerializeAsString();
+            grpc_slice slice = grpc_slice_from_copied_buffer(body.c_str(), body.length());
+            grpc_byte_buffer *buf = grpc_raw_byte_buffer_create(&slice, 1);
 
             op->op = GRPC_OP_SEND_MESSAGE;
             op->data.send_message.send_message = buf;
@@ -88,7 +96,7 @@ int main(int argc, char const *argv[]) {
             op++;
             op->op = GRPC_OP_SEND_STATUS_FROM_SERVER;
             op->data.send_status_from_server.trailing_metadata_count = 0;
-            op->data.send_status_from_server.status = GRPC_STATUS_UNIMPLEMENTED;
+            op->data.send_status_from_server.status = GRPC_STATUS_OK;
             grpc_slice status_details = grpc_slice_from_static_string("xyz");
             op->data.send_status_from_server.status_details = &status_details;
             op->flags = 0;
@@ -111,6 +119,8 @@ int main(int argc, char const *argv[]) {
     grpc_completion_queue_shutdown(cq);
     grpc_completion_queue_destroy(cq);
     grpc_shutdown();
+
+    google::protobuf::ShutdownProtobufLibrary();
 
     return 0;
 }
