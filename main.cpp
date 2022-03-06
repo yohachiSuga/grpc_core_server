@@ -15,41 +15,13 @@ grpc_byte_buffer *string_to_byte_buffer(const char *string, size_t length) {
 
 void grpc_metadata_array_init(grpc_metadata_array *array) { memset(array, 0, sizeof(grpc_metadata_array)); }
 
-int main(int argc, char const *argv[]) {
-    GOOGLE_PROTOBUF_VERIFY_VERSION;
-    /* code */
-    grpc_init();
-    const char *version = grpc_version_string();
-    if (version == nullptr) {
-        return -1;
-    } else {
-        fprintf(stderr, "version:%s\n", version);
-    }
+typedef struct server_ctx {
+    grpc_server *server;
+    grpc_completion_queue *cq;
+} server_ctx;
 
-    grpc_server *server = grpc_server_create(nullptr, nullptr);
-    if (server == nullptr) {
-        fprintf(stderr, "grpc_server_create failed %d\n", __LINE__);
-        return -1;
-    }
-
-    grpc_completion_queue *cq = grpc_completion_queue_create_for_pluck(nullptr);
-    grpc_server_register_completion_queue(server, cq, nullptr);
-
-    const char addr[] = "[::]:50051";
-    int ret = grpc_server_add_insecure_http2_port(server, addr);
-    if (ret == 0) {
-        fprintf(stderr, "cannot bind addr %s\n", addr);
-        return -1;
-    }
-
-    // const char *method = "";
-    // const char *host = "";
-    // void *ret_pointer = grpc_server_register_method(server, method, host, GRPC_SRM_PAYLOAD_READ_INITIAL_BYTE_BUFFER, 0);
-    // if (ret_pointer == nullptr) {
-    //     fprintf(stderr, "regsitration error\n");
-    //     return -1;
-    // }
-    grpc_server_start(server);
+void *server_thread(void *data) {
+    server_ctx *ctx = (server_ctx *)data;
 
     gpr_timespec ts = {.tv_sec = 1, .tv_nsec = 0, .clock_type = GPR_TIMESPAN};
 
@@ -62,11 +34,11 @@ int main(int argc, char const *argv[]) {
         grpc_metadata_array request_metadata;
         grpc_metadata_array_init(&request_metadata);
 
-        grpc_server_request_call(server, &call, &details, &request_metadata, cq, cq, (void *)call);
+        grpc_server_request_call(ctx->server, &call, &details, &request_metadata, ctx->cq, ctx->cq, (void *)call);
 
         bool is_loop = true;
         while (is_loop) {
-            grpc_event e = grpc_completion_queue_pluck(cq, (void *)call, ts, nullptr);
+            grpc_event e = grpc_completion_queue_pluck(ctx->cq, (void *)call, ts, nullptr);
             switch (e.type) {
             case GRPC_QUEUE_TIMEOUT:
                 fprintf(stderr, "poll queue, timeout\n");
@@ -123,6 +95,52 @@ int main(int argc, char const *argv[]) {
         }
         fprintf(stderr, "finish handle rpc\n");
     }
+
+    return nullptr;
+}
+
+int main(int argc, char const *argv[]) {
+    GOOGLE_PROTOBUF_VERIFY_VERSION;
+    /* code */
+    grpc_init();
+    const char *version = grpc_version_string();
+    if (version == nullptr) {
+        return -1;
+    } else {
+        fprintf(stderr, "version:%s\n", version);
+    }
+
+    // server builder
+    grpc_server *server = grpc_server_create(nullptr, nullptr);
+    if (server == nullptr) {
+        fprintf(stderr, "grpc_server_create failed %d\n", __LINE__);
+        return -1;
+    }
+
+    grpc_completion_queue *cq = grpc_completion_queue_create_for_pluck(nullptr);
+    grpc_server_register_completion_queue(server, cq, nullptr);
+
+    const char addr[] = "[::]:50051";
+    int ret = grpc_server_add_insecure_http2_port(server, addr);
+    if (ret == 0) {
+        fprintf(stderr, "cannot bind addr %s\n", addr);
+        return -1;
+    }
+
+    // server start
+    grpc_server_start(server);
+
+    // currently only one thread and proc unary call
+    pthread_t work_th;
+    server_ctx ctx;
+    ctx.server = server;
+    ctx.cq = cq;
+    ret = pthread_create(&work_th, nullptr, server_thread, (void *)&ctx);
+    if (ret != 0) {
+        fprintf(stderr, "thread_creation error\n");
+    }
+
+    pthread_join(work_th, nullptr);
 
     grpc_server_shutdown_and_notify(server, cq, nullptr);
 
