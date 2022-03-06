@@ -1,4 +1,5 @@
 #include "helloworld.pb.h"
+#include "queue.h"
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -18,7 +19,15 @@ void grpc_metadata_array_init(grpc_metadata_array *array) { memset(array, 0, siz
 typedef struct server_ctx {
     grpc_server *server;
     grpc_completion_queue *cq;
+    void *head;
 } server_ctx;
+
+typedef struct server_queue_item {
+    char *method;
+    char *body;
+    size_t body_length;
+    LIST_ENTRY(server_queue_item) entries;
+} server_queue_item;
 
 void *server_thread(void *data) {
     server_ctx *ctx = (server_ctx *)data;
@@ -70,6 +79,8 @@ void *server_thread(void *data) {
                     op->op = GRPC_OP_SEND_MESSAGE;
                     op->data.send_message.send_message = buf;
 
+                    // TODO: need to push queue
+
                     // send status
                     op++;
                     op->op = GRPC_OP_SEND_STATUS_FROM_SERVER;
@@ -101,6 +112,7 @@ void *server_thread(void *data) {
 
 int main(int argc, char const *argv[]) {
     GOOGLE_PROTOBUF_VERIFY_VERSION;
+
     /* code */
     grpc_init();
     const char *version = grpc_version_string();
@@ -130,11 +142,15 @@ int main(int argc, char const *argv[]) {
     // server start
     grpc_server_start(server);
 
+    SLIST_HEAD(server_queue_head, server_queue_item) head;
+    SLIST_INIT(&head);
+
     // currently only one thread and proc unary call
     pthread_t work_th;
     server_ctx ctx;
     ctx.server = server;
     ctx.cq = cq;
+    ctx.head = (void *)&head;
     ret = pthread_create(&work_th, nullptr, server_thread, (void *)&ctx);
     if (ret != 0) {
         fprintf(stderr, "thread_creation error\n");
